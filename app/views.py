@@ -19,11 +19,12 @@ def login_required(f):
 
 @app.route("/")
 def index():
-    form = SearchForm()
-    loginform = LoginForm()
-    books=Book.query.order_by(desc('id')).limit(5).all()
-    authors=Author.query.order_by(desc('id')).limit(5).all()
-    return render_template('index.html',books=books,authors=authors,form=form,loginform=loginform)
+    return '123';
+    #form = SearchForm()
+    #loginform = LoginForm()
+    #books=Book.query.order_by(desc('id')).limit(5).all()
+    #authors=Author.query.order_by(desc('id')).limit(5).all()
+    #return render_template('index.html',books=books,authors=authors,form=form,loginform=loginform)
 
 @app.route("/authors")
 def authors():
