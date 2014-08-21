@@ -1,0 +1,19 @@
+{% extends "layout/layout.html" %}
+{% block container %}
+    <div class="row">
+      <div class="span3">
+      <h2 class="sub-header">{% if author.id %}Редактирование автора: {{ author.name }}{% else %}Добавление автора{% endif %}</h2>
+      {% from "_formhelpers.html" import render_field %}
+
+          <form role="form" method="post" action="/author/edit">
+            {{ form.hidden_tag() }}
+            {{ form.id(type="hidden") }}
+            {{ render_field(form.name,class="form-control")|safe }}
+            <input type="submit" class="btn btn-success btn-lg btn-sm" value="Сохранить">
+            {% if author.id %}
+            <a type="button" data-toggle="modal" data-target="#confirm-delete" data-href="{{ url_for('delete', instance='author', obj_id=author.id) }}" class="btn btn-danger btn-lg btn-sm">Удалить</a>
+            {% endif %}
+            <a type="button" href="{{ url_for('authors') }}" class="btn btn-primary btn-lg btn-sm">Отмена</a>
+          </form>
+        </div>
+{% endblock %}

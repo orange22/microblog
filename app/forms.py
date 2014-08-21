@@ -1,37 +1,26 @@
-from flask.ext.wtf import Form
-from wtforms import TextField, BooleanField, TextAreaField
-from wtforms.validators import Required, Length
-from flask.ext.babel import gettext
-from app.models import User
+__author__ = 'Orange'
+from flask_wtf import Form
+from wtforms import StringField,SelectMultipleField, PasswordField, ValidationError
+from wtforms.validators import DataRequired, Length
+from flask import session
+from app.models import *
+
+class AuthorForm(Form):
+    id = StringField('id')
+    name = StringField('name', validators=[DataRequired()])
+
+class BookForm(Form):
+    id = StringField('id')
+    name = StringField('name', validators=[DataRequired()])
+    authors = SelectMultipleField(u'Author list', choices = [(g.id, g.name) for g in Author.query.all()])
+
+class SearchForm(Form):
+    search = StringField('search', validators = [DataRequired()])
+
+def check_login(form, field):
+    if field.data != 'admin':
+        raise ValidationError('Field must be less than 50 characters')
 
 class LoginForm(Form):
-    openid = TextField('openid', validators = [Required()])
-    remember_me = BooleanField('remember_me', default = False)
-    
-class EditForm(Form):
-    nickname = TextField('nickname', validators = [Required()])
-    about_me = TextAreaField('about_me', validators = [Length(min = 0, max = 140)])
-    
-    def __init__(self, original_nickname, *args, **kwargs):
-        Form.__init__(self, *args, **kwargs)
-        self.original_nickname = original_nickname
-        
-    def validate(self):
-        if not Form.validate(self):
-            return False
-        if self.nickname.data == self.original_nickname:
-            return True
-        if self.nickname.data != User.make_valid_nickname(self.nickname.data):
-            self.nickname.errors.append(gettext('This nickname has invalid characters. Please use letters, numbers, dots and underscores only.'))
-            return False
-        user = User.query.filter_by(nickname = self.nickname.data).first()
-        if user != None:
-            self.nickname.errors.append(gettext('This nickname is already in use. Please choose another one.'))
-            return False
-        return True
-        
-class PostForm(Form):
-    post = TextField('post', validators = [Required()])
-    
-class SearchForm(Form):
-    search = TextField('search', validators = [Required()])
+    username = StringField('Username', validators=[DataRequired(),check_login])
+    password = PasswordField('Password', validators=[DataRequired(),check_login])

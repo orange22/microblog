@@ -1,189 +1,155 @@
-from flask import render_template, flash, redirect, session, url_for, request, g, jsonify
-from flask.ext.login import login_user, logout_user, current_user, login_required
-from flask.ext.sqlalchemy import get_debug_queries
-from flask.ext.babel import gettext
-from app import app, db, lm, oid, babel
-from forms import LoginForm, EditForm, PostForm, SearchForm
-from models import User, ROLE_USER, ROLE_ADMIN, Post
-from datetime import datetime
-from emails import follower_notification
-from guess_language import guessLanguage
-from translate import microsoft_translate
-from config import POSTS_PER_PAGE, MAX_SEARCH_RESULTS, LANGUAGES, DATABASE_QUERY_TIMEOUT, WHOOSH_ENABLED
-
-@lm.user_loader
-def load_user(id):
-    return User.query.get(int(id))
-
-@babel.localeselector
-def get_locale():
-    return request.accept_languages.best_match(LANGUAGES.keys())
+__author__ = 'orange'
+import pprint
+from app import app
+from app.models import *
+from app.forms import *
+from sqlalchemy import desc, or_
+from database import db_session
+from flask import render_template, session, request, redirect, url_for
+from functools import wraps
 
 
-@app.errorhandler(404)
-def internal_error(error):
-    return render_template('404.html'), 404
+def login_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'username' not in session:
+            return redirect(url_for('index'))
+        return f(*args, **kwargs)
+    return decorated_function
 
-@app.errorhandler(500)
-def internal_error(error):
-    db.session.rollback()
-    return render_template('500.html'), 500
+@app.route("/")
+def index():
+    form = SearchForm()
+    loginform = LoginForm()
+    books=Book.query.order_by(desc('id')).limit(5).all()
+    authors=Author.query.order_by(desc('id')).limit(5).all()
+    return render_template('index.html',books=books,authors=authors,form=form,loginform=loginform)
 
-@app.route('/', methods = ['GET', 'POST'])
-@app.route('/index', methods = ['GET', 'POST'])
-@app.route('/index/<int:page>', methods = ['GET', 'POST'])
-def index(page = 1):
-    return 'hello world'
+@app.route("/authors")
+def authors():
+    loginform = LoginForm()
+    authors=Author.query.order_by(desc('id')).all()
+    return render_template('authors.html',authors=authors,loginform=loginform)
 
-@app.route('/login', methods = ['GET', 'POST'])
-@oid.loginhandler
-def login():
-    if g.user is not None and g.user.is_authenticated():
+@app.route("/books")
+def books():
+    loginform = LoginForm()
+    books=Book.query.order_by(desc('id')).all()
+    return render_template('books.html',books=books,loginform=loginform)
+
+
+@app.route('/author/<int:author_id>')
+def show_author(author_id):
+    loginform = LoginForm()
+    author=Author.query.filter_by(id=author_id).first()
+    return render_template('author.html',author=author,loginform=loginform)
+
+@app.route('/<instance>/delete/<int:obj_id>')
+@login_required
+def delete(instance=None,obj_id=None):
+        if instance == 'author':
+            obj = Author.query.filter_by(id=obj_id).first()
+        if instance == 'book':
+            obj = Book.query.filter_by(id=obj_id).first()
+        db_session.delete(obj)
+        db_session.commit()
+        return redirect('/'+instance+'s')
+
+
+@app.route('/author/create')
+@app.route('/author/edit', methods=['GET', 'POST'])
+@app.route('/author/edit/<int:author_id>')
+@login_required
+def edit_author(author_id=None):
+    model=Author.query.filter_by(id=author_id).first()
+    form = AuthorForm(request.form, model)
+    #pprint (vars(form))
+
+    if request.method == 'POST' and form.validate():
+        author = Author(form.name.data)
+        if form.id.data:
+            db_session.query(Author).filter_by(id=form.id.data).update({"name": form.name.data})
+        else:
+            db_session.add(author)
+        db_session.commit()
+        return redirect('/')
+
+
+    return render_template('authoredit.html',author=model,form=form)
+
+@app.route('/book/<int:book_id>')
+def show_book(book_id):
+    loginform = LoginForm()
+    book=Book.query.filter_by(id=book_id).first()
+    return render_template('book.html',book=book,loginform=loginform)
+
+@app.route('/book/create')
+@app.route('/book/edit', methods=['GET', 'POST'])
+@app.route('/book/edit/<int:book_id>')
+@login_required
+def edit_book(book_id=None):
+    if not session['username']:
         return redirect(url_for('index'))
-    form = LoginForm()
-    if form.validate_on_submit():
-        session['remember_me'] = form.remember_me.data
-        return oid.try_login(form.openid.data, ask_for = ['nickname', 'email'])
-    return render_template('login.html', 
-        title = 'Sign In',
-        form = form,
-        providers = app.config['OPENID_PROVIDERS'])
 
-@oid.after_login
-def after_login(resp):
-    if resp.email is None or resp.email == "":
-        flash(gettext('Invalid login. Please try again.'))
-        return redirect(url_for('login'))
-    user = User.query.filter_by(email = resp.email).first()
-    if user is None:
-        nickname = resp.nickname
-        if nickname is None or nickname == "":
-            nickname = resp.email.split('@')[0]
-        nickname = User.make_valid_nickname(nickname)
-        nickname = User.make_unique_nickname(nickname)
-        user = User(nickname = nickname, email = resp.email, role = ROLE_USER)
-        db.session.add(user)
-        db.session.commit()
-        # make the user follow him/herself
-        db.session.add(user.follow(user))
-        db.session.commit()
-    remember_me = False
-    if 'remember_me' in session:
-        remember_me = session['remember_me']
-        session.pop('remember_me', None)
-    login_user(user, remember = remember_me)
-    return redirect(request.args.get('next') or url_for('index'))
+    form = BookForm(request.form)
+    form.authors.choices = [(g.id, g.name) for g in Author.query.all()]
+    model=Book.query.filter_by(id=book_id).first()
+
+
+    if book_id:
+        form.id.data=model.id
+        form.name.data=model.name
+        form.authors.data=map(str, [(g.id) for g in model.authors])
+
+    if request.method == 'POST':
+        form.authors.choices = [(g.id, g.name) for g in Author.query.all()]
+        form.authors.choices = form.authors.data
+        if form.validate():
+            if form.id.data:
+                model=Book.query.filter_by(id=form.id.data).first()
+                model.name = form.name.data
+                model.authors = Author.query.filter(Author.id.in_(form.authors.data)).all()
+                db_session.commit()
+            else:
+                book = Book(form.name.data,Author.query.filter(Author.id.in_(form.authors.data)).all())
+                db_session.add(book)
+
+            db_session.commit()
+            return redirect('/')
+        else:
+           form.authors.choices = [(g.id, g.name) for g in Author.query.all()]
+
+
+    return render_template('bookedit.html',book=model,form=form)
+
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    loginform=LoginForm(request.form)
+    if request.method == 'POST' and loginform.validate():
+        session['username'] = request.form['username']
+    return redirect(url_for('index'))
 
 @app.route('/logout')
 def logout():
-    logout_user()
+    # remove the username from the session if it's there
+    session.pop('username', None)
     return redirect(url_for('index'))
-    
-@app.route('/user/<nickname>')
-@app.route('/user/<nickname>/<int:page>')
-@login_required
-def user(nickname, page = 1):
-    user = User.query.filter_by(nickname = nickname).first()
-    if user == None:
-        flash(gettext('User %(nickname)s not found.', nickname = nickname))
-        return redirect(url_for('index'))
-    posts = user.posts.paginate(page, POSTS_PER_PAGE, False)
-    return render_template('user.html',
-        user = user,
-        posts = posts)
 
-@app.route('/edit', methods = ['GET', 'POST'])
-@login_required
-def edit():
-    form = EditForm(g.user.nickname)
-    if form.validate_on_submit():
-        g.user.nickname = form.nickname.data
-        g.user.about_me = form.about_me.data
-        db.session.add(g.user)
-        db.session.commit()
-        flash(gettext('Your changes have been saved.'))
-        return redirect(url_for('edit'))
-    elif request.method != "POST":
-        form.nickname.data = g.user.nickname
-        form.about_me.data = g.user.about_me
-    return render_template('edit.html',
-        form = form)
-
-@app.route('/follow/<nickname>')
-@login_required
-def follow(nickname):
-    user = User.query.filter_by(nickname = nickname).first()
-    if user == None:
-        flash('User ' + nickname + ' not found.')
-        return redirect(url_for('index'))
-    if user == g.user:
-        flash(gettext('You can\'t follow yourself!'))
-        return redirect(url_for('user', nickname = nickname))
-    u = g.user.follow(user)
-    if u is None:
-        flash(gettext('Cannot follow %(nickname)s.', nickname = nickname))
-        return redirect(url_for('user', nickname = nickname))
-    db.session.add(u)
-    db.session.commit()
-    flash(gettext('You are now following %(nickname)s!', nickname = nickname))
-    follower_notification(user, g.user)
-    return redirect(url_for('user', nickname = nickname))
-
-@app.route('/unfollow/<nickname>')
-@login_required
-def unfollow(nickname):
-    user = User.query.filter_by(nickname = nickname).first()
-    if user == None:
-        flash('User ' + nickname + ' not found.')
-        return redirect(url_for('index'))
-    if user == g.user:
-        flash(gettext('You can\'t unfollow yourself!'))
-        return redirect(url_for('user', nickname = nickname))
-    u = g.user.unfollow(user)
-    if u is None:
-        flash(gettext('Cannot unfollow %(nickname)s.', nickname = nickname))
-        return redirect(url_for('user', nickname = nickname))
-    db.session.add(u)
-    db.session.commit()
-    flash(gettext('You have stopped following %(nickname)s.', nickname = nickname))
-    return redirect(url_for('user', nickname = nickname))
-
-@app.route('/delete/<int:id>')
-@login_required
-def delete(id):
-    post = Post.query.get(id)
-    if post == None:
-        flash('Post not found.')
-        return redirect(url_for('index'))
-    if post.author.id != g.user.id:
-        flash('You cannot delete this post.')
-        return redirect(url_for('index'))
-    db.session.delete(post)
-    db.session.commit()
-    flash('Your post has been deleted.')
-    return redirect(url_for('index'))
-    
-@app.route('/search', methods = ['POST'])
-@login_required
+@app.route('/search', methods=['GET', 'POST'])
 def search():
-    if not g.search_form.validate_on_submit():
-        return redirect(url_for('index'))
-    return redirect(url_for('search_results', query = g.search_form.search.data))
+    loginform = LoginForm()
+    searchform = SearchForm()
+    if request.form:
+        term = request.form['search']
+    else:
+        term = '';
+    books=Book.query.\
+       join(Book.auth).\
+       join(AuthorBook.author).\
+       filter(or_(Book.name.like('%'+term+'%'),Author.name.like('%'+term+'%')))
+    return render_template('search.html',books=books,form=searchform,loginform=loginform)
 
-@app.route('/search_results/<query>')
-@login_required
-def search_results(query):
-    results = Post.query.whoosh_search(query, MAX_SEARCH_RESULTS).all()
-    return render_template('search_results.html',
-        query = query,
-        results = results)
-
-@app.route('/translate', methods = ['POST'])
-@login_required
-def translate():
-    return jsonify({
-        'text': microsoft_translate(
-            request.form['text'],
-            request.form['sourceLang'],
-            request.form['destLang']) })
-
+@app.teardown_appcontext
+def shutdown_session(exception=None):
+    db_session.remove()
