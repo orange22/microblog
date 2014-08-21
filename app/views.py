@@ -32,7 +32,6 @@ def internal_error(error):
 @app.route('/', methods = ['GET', 'POST'])
 @app.route('/index', methods = ['GET', 'POST'])
 @app.route('/index/<int:page>', methods = ['GET', 'POST'])
-@login_required
 def index(page = 1):
     return 'hello world'
 
